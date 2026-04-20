@@ -1,0 +1,35 @@
+# Python / local runtime
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+
+# Build output
+build/
+*.spec.bak
+dist/*
+!dist/main.exe
+
+# Local Telegram sessions and secrets
+*.session
+*.session-journal
+*.env
+configs/
+dist/configs/
+dist/*.session
+dist/*.session-journal
+
+# Local license/state files generated per installation
+license.json
+dev_license.json
+dist/license.json
+
+# Editor / OS
+.idea/
+.vscode/
+Desktop.ini
+Thumbs.db
