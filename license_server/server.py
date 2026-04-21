@@ -161,8 +161,8 @@ def html_page(title: str, body: str) -> HTMLResponse:
     .status-revoked { color:var(--red); }
     .empty-state { padding:30px; text-align:center; color:var(--muted); }
     .backup-list { padding-left:18px; line-height:1.9; color:var(--muted); max-height:165px; overflow:auto; }
-    [data-animate] { opacity:0; transform:translateY(34px) scale(.985); filter:blur(8px); }
-    [data-animate].is-visible { opacity:1; transform:translateY(0) scale(1); filter:blur(0); transition:opacity .72s ease, transform .72s cubic-bezier(.2,.82,.2,1), filter .72s ease; transition-delay:calc(var(--i, 0) * 65ms); }
+    .js-ready [data-animate] { opacity:0; transform:translateY(34px) scale(.985); filter:blur(8px); }
+    .js-ready [data-animate].is-visible { opacity:1; transform:translateY(0) scale(1); filter:blur(0); transition:opacity .72s ease, transform .72s cubic-bezier(.2,.82,.2,1), filter .72s ease; transition-delay:calc(var(--i, 0) * 65ms); }
     @keyframes listIn { from { opacity:0; transform:translateY(22px) scale(.985); } to { opacity:1; transform:translateY(0) scale(1); } }
     @media (max-width: 1050px) {
       .grid { grid-template-columns:1fr; }
@@ -183,6 +183,7 @@ def html_page(title: str, body: str) -> HTMLResponse:
 <main>__BODY__</main>
 <script>
 (() => {
+  document.documentElement.classList.add('js-ready');
   const canvas = document.getElementById('dark-veil');
   const ctx = canvas.getContext('2d');
   let w = 0, h = 0, t = 0;
