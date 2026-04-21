@@ -172,10 +172,23 @@ def require_cli_license() -> OnlineLicenseResult:
 
     if not server_url:
         server_url = input("Адрес сервера лицензий: ").strip()
-    if not license_key:
-        license_key = input("Лицензионный ключ: ").strip()
 
-    result = verify_online_license(server_url, license_key)
-    if result.ok:
-        save_license_config(server_url, license_key)
+    for attempt in range(3):
+        if not license_key:
+            license_key = input("Лицензионный ключ: ").strip()
+
+        result = verify_online_license(server_url, license_key)
+        if result.ok:
+            save_license_config(server_url, license_key)
+            return result
+
+        print(f"Лицензия не прошла проверку: {result.message}")
+        if attempt >= 2:
+            return result
+
+        retry = input("Ввести другой ключ? y/n [y]: ").strip().lower()
+        if retry in {"n", "no", "нет"}:
+            return result
+        license_key = ""
+
     return result
