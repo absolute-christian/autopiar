@@ -12,7 +12,8 @@ from typing import Optional
 
 
 PRODUCT_ID = "autopiar"
-LICENSE_CONFIG_FILE = os.path.join("configs", "online_license.json")
+APP_DATA_DIR_NAME = "AutoPiar"
+LICENSE_CONFIG_FILE = "online_license.json"
 
 
 @dataclass
@@ -22,16 +23,20 @@ class OnlineLicenseResult:
     payload: dict
 
 
-def runtime_base_dir() -> Path:
-    import sys
-
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+def app_data_dir() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        if base:
+            path = Path(base) / APP_DATA_DIR_NAME
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+    path = Path.home() / ".autopiar"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def license_config_path() -> Path:
-    return runtime_base_dir() / LICENSE_CONFIG_FILE
+    return app_data_dir() / LICENSE_CONFIG_FILE
 
 
 def load_license_config() -> dict:

@@ -23,7 +23,9 @@ from online_license import require_cli_license
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
-SESSION_NAME = os.getenv("SESSION_NAME", "termux_auto_piar")
+DATA_DIR = Path(os.getenv("AUTOPIAR_DATA_DIR", str(Path.home() / ".autopiar")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_NAME = os.getenv("SESSION_NAME", str(DATA_DIR / "termux_auto_piar"))
 COLOR_ENABLED = os.getenv("NO_COLOR", "").strip() == ""
 
 TG_EMOJI_RE = re.compile(

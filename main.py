@@ -205,19 +205,26 @@ def parse_tg_emoji_html(text: str):
 # -----------------------------
 # Настройки проекта (ОБЯЗАТЕЛЬНО заполнить)
 # -----------------------------
-API_ID = 0          # заполняется через "API настройки" или configs/api_credentials.json
-API_HASH = ""       # заполняется через "API настройки" или configs/api_credentials.json
+API_ID = 0          # заполняется через "API настройки" или локальный app data
+API_HASH = ""       # заполняется через "API настройки" или локальный app data
 
 APP_TITLE = "Telethon Neon Sender"
-DEFAULT_SESSION_NAME = "telethon_gui.session"  # будет создан рядом со скриптом
-API_CONFIG_FILE = os.path.join("configs", "api_credentials.json")
-PROFILES_FILE = os.path.join("configs", "profiles.json")
+APP_DATA_DIR_NAME = "AutoPiar"
+DEFAULT_SESSION_NAME = "telethon_gui.session"
+API_CONFIG_FILE = "api_credentials.json"
+PROFILES_FILE = "profiles.json"
 
 
 def runtime_base_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        if base:
+            path = os.path.join(base, APP_DATA_DIR_NAME)
+            os.makedirs(path, exist_ok=True)
+            return path
+    path = os.path.join(os.path.expanduser("~"), ".autopiar")
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def config_path(relative_path: str) -> str:

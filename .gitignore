@@ -13,6 +13,9 @@ build/
 *.spec.bak
 dist/*
 !dist/main.exe
+release/*
+!release/README.txt
+!release/AutoPiar.zip
 
 # Local Telegram sessions and secrets
 *.session
