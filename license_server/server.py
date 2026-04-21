@@ -2,17 +2,23 @@ import os
 import secrets
 import sqlite3
 import json
+import html as html_utils
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 
-DB_PATH = Path(os.getenv("LICENSE_DB_PATH", "licenses.db"))
-BACKUP_DIR = Path(os.getenv("LICENSE_BACKUP_DIR", "backups"))
+DEFAULT_DATA_DIR = Path(os.getenv("LICENSE_DATA_DIR", "")).expanduser() if os.getenv("LICENSE_DATA_DIR") else Path(__file__).resolve().parent
+if Path("/data").exists() and not os.getenv("LICENSE_DATA_DIR"):
+    DEFAULT_DATA_DIR = Path("/data")
+
+DB_PATH = Path(os.getenv("LICENSE_DB_PATH", str(DEFAULT_DATA_DIR / "licenses.db"))).expanduser()
+BACKUP_DIR = Path(os.getenv("LICENSE_BACKUP_DIR", str(DEFAULT_DATA_DIR / "backups"))).expanduser()
 ADMIN_TOKEN = os.getenv("LICENSE_ADMIN_TOKEN", "")
 PRODUCT_ID = os.getenv("LICENSE_PRODUCT_ID", "autopiar")
 
@@ -20,82 +26,228 @@ app = FastAPI(title="AutoPiar License Server", version="1.0.0")
 
 
 def html_page(title: str, body: str) -> HTMLResponse:
-    return HTMLResponse(
-        f"""<!doctype html>
+    template = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
+  <title>__TITLE__</title>
   <style>
-    :root {{
-      --bg:#070512; --card:#100B2A; --card2:#171038; --line:#5227FF;
-      --pink:#FF9FFC; --text:#F4F7FF; --muted:#B9B3D8; --green:#39FF9A; --red:#FF4D7D;
-    }}
-    * {{ box-sizing:border-box; }}
-    body {{
-      margin:0; min-height:100vh; color:var(--text);
-      font-family:Segoe UI, Arial, sans-serif;
+    :root {
+      --bg:#05030d; --panel:#0d0822; --panel2:#130d2e; --line:#5227FF;
+      --pink:#FF9FFC; --text:#F7F4FF; --muted:#BDB6DA; --soft:#8f82ff;
+      --green:#59ffb1; --red:#ff5d8f; --amber:#ffd36e; --border:rgba(255,159,252,.22);
+    }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body {
+      margin:0; min-height:100vh; color:var(--text); overflow-x:hidden;
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:#05030d;
+    }
+    body::before {
+      content:""; position:fixed; inset:0; pointer-events:none; z-index:-2;
       background:
-        radial-gradient(circle at 20% 10%, rgba(82,39,255,.35), transparent 30%),
-        radial-gradient(circle at 80% 0%, rgba(255,159,252,.18), transparent 26%),
-        linear-gradient(135deg, #05030D, #120B31 55%, #24106E);
-    }}
-    main {{ max-width:1360px; margin:0 auto; padding:32px 18px; }}
-    h1 {{ margin:0 0 8px; font-size:30px; letter-spacing:.2px; }}
-    p {{ color:var(--muted); }}
-    .grid {{ display:grid; grid-template-columns:minmax(320px, 360px) minmax(560px, 1fr); gap:18px; align-items:start; }}
-    .wide {{ grid-column:1 / -1; }}
-    .card {{
-      background:rgba(12,8,38,.86); border:1px solid rgba(255,159,252,.22);
-      border-radius:22px; padding:18px; box-shadow:0 18px 70px rgba(0,0,0,.35);
-    }}
-    .notice {{
-      margin:0 0 18px; padding:14px 16px; border-radius:18px;
-      border:1px solid rgba(255,159,252,.28); background:rgba(255,159,252,.08);
-      color:var(--muted);
-    }}
-    label {{ display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }}
-    input, select {{
-      width:100%; padding:13px 14px; border-radius:14px; outline:none;
-      border:1px solid rgba(82,39,255,.55); background:#070512; color:var(--text);
-    }}
-    input:focus {{ border-color:var(--pink); }}
-    button, .button {{
-      display:inline-block; border:0; cursor:pointer; text-decoration:none;
-      margin-top:14px; padding:12px 16px; border-radius:14px; color:#100A24;
-      font-weight:800; background:linear-gradient(90deg, var(--line), var(--pink));
-      white-space:nowrap;
-    }}
-    .table-wrap {{ width:100%; overflow-x:auto; border-radius:18px; }}
-    table {{ width:100%; min-width:1080px; border-collapse:collapse; }}
-    th, td {{ text-align:left; padding:12px; border-bottom:1px solid rgba(255,255,255,.08); vertical-align:middle; }}
-    th {{ color:#fff; background:rgba(82,39,255,.24); font-size:12px; }}
-    td {{ color:#EAF1FF; font-size:13px; }}
-    code {{ color:var(--pink); }}
-    .key-cell {{ min-width:420px; width:44%; }}
-    .key-pill {{
-      display:inline-block; max-width:min(620px, 52vw); overflow:hidden; text-overflow:ellipsis;
-      white-space:nowrap; padding:7px 9px; border-radius:10px;
+        radial-gradient(circle at 18% 8%, rgba(82,39,255,.42), transparent 34%),
+        radial-gradient(circle at 84% 6%, rgba(255,159,252,.22), transparent 28%),
+        radial-gradient(circle at 50% 105%, rgba(82,39,255,.25), transparent 42%),
+        linear-gradient(135deg, #05030d 0%, #0c0620 48%, #150a36 100%);
+    }
+    #dark-veil {
+      position:fixed; inset:0; width:100%; height:100%; z-index:-1; opacity:.72;
+      filter:saturate(1.08) contrast(1.08);
+    }
+    ::selection { background:rgba(255,159,252,.35); color:#fff; }
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-track { background:#080515; border-radius:999px; }
+    ::-webkit-scrollbar-thumb {
+      background:linear-gradient(180deg, rgba(82,39,255,.9), rgba(255,159,252,.86));
+      border-radius:999px; border:2px solid #080515;
+    }
+    main { width:min(1380px, calc(100% - 34px)); margin:0 auto; padding:34px 0 48px; }
+    h1, h2, h3, p { margin-top:0; }
+    h1 { font-size:clamp(34px, 5vw, 68px); line-height:.95; letter-spacing:-.06em; margin-bottom:18px; }
+    h2 { font-size:22px; letter-spacing:-.03em; }
+    p { color:var(--muted); line-height:1.62; }
+    code { color:#ffd6ff; }
+    a { color:#ffd6ff; }
+    .hero {
+      min-height:210px; display:grid; align-items:end; margin-bottom:22px; position:relative;
+      padding:30px; border-radius:32px; overflow:hidden;
+      border:1px solid rgba(255,255,255,.12); background:linear-gradient(135deg, rgba(13,8,34,.72), rgba(19,13,46,.48));
+      box-shadow:0 24px 100px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.08);
+    }
+    .hero::after {
+      content:""; position:absolute; inset:auto -18% -58% 34%; height:230px; pointer-events:none;
+      background:radial-gradient(circle, rgba(255,159,252,.34), transparent 63%);
+      filter:blur(8px);
+    }
+    .hero-kicker { color:#FF9FFC; font-weight:900; letter-spacing:.18em; text-transform:uppercase; font-size:12px; }
+    .hero-copy { max-width:760px; position:relative; z-index:1; }
+    .hero-meta { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+    .pill {
+      display:inline-flex; align-items:center; gap:8px; padding:9px 12px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.055); color:#ede8ff;
+      font-size:12px; font-weight:800; backdrop-filter:blur(12px);
+    }
+    .dot { width:8px; height:8px; border-radius:999px; background:var(--green); box-shadow:0 0 18px var(--green); }
+    .grid { display:grid; grid-template-columns:minmax(320px, 390px) minmax(560px, 1fr); gap:18px; align-items:start; }
+    .wide { grid-column:1 / -1; }
+    .bento-card, .card {
+      position:relative; isolation:isolate; overflow:hidden; border-radius:28px; padding:22px;
+      border:1px solid var(--border); background:linear-gradient(145deg, rgba(15,9,39,.88), rgba(10,6,25,.76));
+      box-shadow:0 22px 80px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.07);
+      transition:transform .28s ease, border-color .28s ease, box-shadow .28s ease;
+    }
+    .bento-card::before, .card::before {
+      content:""; position:absolute; inset:0; z-index:-1; opacity:0; transition:opacity .28s ease;
+      background:radial-gradient(520px circle at var(--mx, 50%) var(--my, 0%), rgba(255,159,252,.18), transparent 42%);
+    }
+    .bento-card:hover, .card:hover { transform:translateY(-3px); border-color:rgba(255,159,252,.44); box-shadow:0 28px 90px rgba(82,39,255,.2); }
+    .bento-card:hover::before, .card:hover::before { opacity:1; }
+    .notice {
+      margin:0 0 18px; padding:15px 17px; border-radius:20px; color:#e9e2ff;
+      border:1px solid rgba(255,211,110,.24); background:linear-gradient(135deg, rgba(255,211,110,.13), rgba(82,39,255,.08));
+    }
+    label { display:block; color:var(--muted); font-size:12px; margin:13px 0 7px; font-weight:800; }
+    input, select {
+      width:100%; padding:14px 15px; border-radius:16px; outline:none;
+      border:1px solid rgba(82,39,255,.55); background:rgba(5,3,13,.74); color:var(--text);
+      transition:border-color .2s ease, box-shadow .2s ease, background .2s ease;
+    }
+    input:focus, select:focus { border-color:var(--pink); box-shadow:0 0 0 4px rgba(255,159,252,.1); background:rgba(7,5,18,.95); }
+    button, .button {
+      display:inline-flex; align-items:center; justify-content:center; gap:8px; border:0; cursor:pointer; text-decoration:none;
+      margin-top:14px; padding:13px 17px; border-radius:16px; color:#100A24;
+      font-weight:950; letter-spacing:-.02em; background:linear-gradient(100deg, var(--line), var(--pink));
+      white-space:nowrap; box-shadow:0 12px 28px rgba(82,39,255,.28); transition:transform .2s ease, filter .2s ease;
+    }
+    button:hover, .button:hover { transform:translateY(-2px); filter:saturate(1.14); }
+    .button.secondary { color:#f6f2ff; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.14); box-shadow:none; }
+    .button.danger { background:linear-gradient(100deg, #ff4d7d, #ff9ffc); }
+    .button-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .stats { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-bottom:18px; }
+    .stat { padding:16px; border-radius:22px; background:rgba(255,255,255,.055); border:1px solid rgba(255,255,255,.09); }
+    .stat b { display:block; font-size:24px; letter-spacing:-.05em; }
+    .stat span { color:var(--muted); font-size:12px; }
+    .created-key { border-color:rgba(89,255,177,.45); margin-bottom:18px; }
+    .created-key p { margin:0 0 8px; color:var(--green); font-weight:900; }
+    .key-created, .key-code {
+      display:block; max-width:100%; overflow:auto; white-space:nowrap; user-select:all;
+      padding:11px 12px; border-radius:16px; color:#ffd6ff; font-family:Consolas, ui-monospace, monospace;
       background:rgba(255,159,252,.08); border:1px solid rgba(255,159,252,.18);
-      font-family:Consolas, monospace;
-    }}
-    .key-created {{
-      display:block; margin-top:8px; max-width:100%; overflow:auto; white-space:nowrap;
-      padding:10px 12px; border-radius:12px; background:rgba(57,255,154,.08);
-      border:1px solid rgba(57,255,154,.22); font-family:Consolas, monospace;
-    }}
-    .actions {{ width:120px; text-align:right; }}
-    .status-active {{ color:var(--green); font-weight:800; }}
-    .status-revoked {{ color:var(--red); font-weight:800; }}
-    .copy {{ user-select:all; }}
-    @media (max-width: 980px) {{ .grid {{ grid-template-columns:1fr; }} .wide {{ grid-column:auto; }} table {{ display:block; overflow-x:auto; }} }}
+    }
+    .keys-shell { position:relative; }
+    .keys-list {
+      max-height:590px; overflow:auto; padding:13px; border-radius:24px;
+      background:rgba(5,3,13,.48); border:1px solid rgba(255,255,255,.08);
+      scroll-behavior:smooth;
+    }
+    .keys-list::before, .keys-list::after { content:""; position:sticky; left:0; right:0; display:block; height:26px; pointer-events:none; z-index:2; }
+    .keys-list::before { top:-13px; margin:-13px -13px 0; background:linear-gradient(to bottom, rgba(7,4,18,.96), transparent); }
+    .keys-list::after { bottom:-13px; margin:0 -13px -13px; background:linear-gradient(to top, rgba(7,4,18,.96), transparent); }
+    .key-item {
+      display:grid; grid-template-columns:minmax(0, 1.25fr) .58fr .46fr .42fr .65fr auto; gap:12px; align-items:center;
+      margin-bottom:12px; padding:14px; border-radius:22px; background:linear-gradient(135deg, rgba(255,255,255,.07), rgba(82,39,255,.08));
+      border:1px solid rgba(255,255,255,.1); box-shadow:none;
+      animation:listIn .58s cubic-bezier(.2,.82,.2,1) both; animation-delay:calc(var(--i, 0) * 48ms);
+    }
+    .key-item:last-child { margin-bottom:0; }
+    .key-label { color:var(--muted); font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.08em; margin-bottom:5px; }
+    .key-value { color:#fff; font-size:13px; overflow:hidden; text-overflow:ellipsis; }
+    .status { display:inline-flex; align-items:center; gap:7px; font-weight:950; }
+    .status::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 15px currentColor; }
+    .status-active { color:var(--green); }
+    .status-revoked { color:var(--red); }
+    .empty-state { padding:30px; text-align:center; color:var(--muted); }
+    .backup-list { padding-left:18px; line-height:1.9; color:var(--muted); max-height:165px; overflow:auto; }
+    [data-animate] { opacity:0; transform:translateY(34px) scale(.985); filter:blur(8px); }
+    [data-animate].is-visible { opacity:1; transform:translateY(0) scale(1); filter:blur(0); transition:opacity .72s ease, transform .72s cubic-bezier(.2,.82,.2,1), filter .72s ease; transition-delay:calc(var(--i, 0) * 65ms); }
+    @keyframes listIn { from { opacity:0; transform:translateY(22px) scale(.985); } to { opacity:1; transform:translateY(0) scale(1); } }
+    @media (max-width: 1050px) {
+      .grid { grid-template-columns:1fr; }
+      .wide { grid-column:auto; }
+      .key-item { grid-template-columns:1fr 1fr; }
+      .stats { grid-template-columns:1fr; }
+    }
+    @media (max-width: 620px) {
+      main { width:min(100% - 22px, 1380px); padding-top:18px; }
+      .hero, .card, .bento-card { border-radius:22px; padding:18px; }
+      .key-item { grid-template-columns:1fr; }
+      h1 { font-size:40px; }
+    }
   </style>
 </head>
 <body>
-<main>{body}</main>
+<canvas id="dark-veil" aria-hidden="true"></canvas>
+<main>__BODY__</main>
+<script>
+(() => {
+  const canvas = document.getElementById('dark-veil');
+  const ctx = canvas.getContext('2d');
+  let w = 0, h = 0, t = 0;
+  const resize = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = canvas.width = Math.floor(innerWidth * dpr);
+    h = canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width = innerWidth + 'px';
+    canvas.style.height = innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  const draw = () => {
+    t += 0.006;
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 9; i++) {
+      const x = innerWidth * (.08 + i * .12) + Math.sin(t * 1.8 + i) * 90;
+      const y = innerHeight * (.18 + Math.sin(t + i * .7) * .22);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 240 + i * 22);
+      g.addColorStop(0, i % 2 ? 'rgba(255,159,252,.13)' : 'rgba(82,39,255,.16)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, 260 + i * 20, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(draw);
+  };
+  resize(); draw(); addEventListener('resize', resize);
+
+  document.querySelectorAll('.bento-card, .card').forEach(card => {
+    card.addEventListener('pointermove', event => {
+      const rect = card.getBoundingClientRect();
+      card.style.setProperty('--mx', `${event.clientX - rect.left}px`);
+      card.style.setProperty('--my', `${event.clientY - rect.top}px`);
+    });
+  });
+
+  const reveal = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        reveal.unobserve(entry.target);
+      }
+    });
+  }, { threshold: .12 });
+  document.querySelectorAll('[data-animate]').forEach(el => reveal.observe(el));
+
+  document.querySelectorAll('[data-copy]').forEach(el => {
+    el.addEventListener('click', async () => {
+      const value = el.getAttribute('data-copy') || el.textContent.trim();
+      try { await navigator.clipboard.writeText(value); } catch (_) {}
+      const old = el.getAttribute('data-label') || el.textContent;
+      el.setAttribute('data-label', old);
+      el.textContent = 'Скопировано';
+      setTimeout(() => { el.textContent = old; }, 900);
+    });
+  });
+})();
+</script>
 </body>
 </html>"""
+    return HTMLResponse(
+        template.replace("__TITLE__", html_utils.escape(title)).replace("__BODY__", body)
     )
 
 
@@ -244,6 +396,20 @@ def is_admin_token(token: str) -> bool:
     return bool(ADMIN_TOKEN) and secrets.compare_digest(token or "", ADMIN_TOKEN)
 
 
+def h(value) -> str:
+    return html_utils.escape(str(value or ""), quote=False)
+
+
+def ha(value) -> str:
+    return html_utils.escape(str(value or ""), quote=True)
+
+
+def admin_url(token: str, **params) -> str:
+    query = {"token": token}
+    query.update({key: value for key, value in params.items() if value is not None})
+    return "/admin?" + urlencode(query)
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "date": date.today().isoformat()}
@@ -254,9 +420,19 @@ def index() -> HTMLResponse:
     return html_page(
         "AutoPiar License",
         """
-        <h1>AutoPiar License Server</h1>
-        <p>Сервер работает. Для управления ключами откройте админ-панель.</p>
-        <a class="button" href="/admin">Открыть админ-панель</a>
+        <section class="hero" data-animate>
+          <div class="hero-copy">
+            <div class="hero-kicker">license core</div>
+            <h1>AutoPiar<br>License Server</h1>
+            <p>Сервер работает. Управление ключами доступно через приватную админ-панель.</p>
+            <div class="hero-meta">
+              <span class="pill"><span class="dot"></span> online</span>
+              <span class="pill">SQLite + backups</span>
+              <span class="pill">Railway ready</span>
+            </div>
+            <a class="button" href="/admin">Открыть админ-панель</a>
+          </div>
+        </section>
         """,
     )
 
@@ -266,14 +442,19 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
     if not is_admin_token(token):
         error = ""
         if token:
-            error = "<p style='color:var(--red);font-weight:800'>Неверный админ-токен.</p>"
+            error = "<div class='notice' style='border-color:rgba(255,93,143,.38)'>Неверный админ-токен.</div>"
         return html_page(
             "AutoPiar Admin",
             f"""
-            <h1>Вход в админ-панель</h1>
-            <p>Введите `LICENSE_ADMIN_TOKEN`, который задан на хостинге.</p>
-            {error}
-            <form method="get" action="/admin" class="card" style="max-width:420px">
+            <section class="hero" data-animate>
+              <div class="hero-copy">
+                <div class="hero-kicker">private access</div>
+                <h1>Вход в<br>админку</h1>
+                <p>Введите <code>LICENSE_ADMIN_TOKEN</code>, который задан в переменных хостинга.</p>
+                {error}
+              </div>
+            </section>
+            <form method="get" action="/admin" class="card" style="max-width:480px" data-animate>
               <label>Админ-токен</label>
               <input name="token" type="password" placeholder="LICENSE_ADMIN_TOKEN" autofocus>
               <button type="submit">Войти</button>
@@ -285,61 +466,95 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
     with connect() as conn:
         rows = conn.execute("SELECT * FROM license_keys ORDER BY created_at DESC").fetchall()
         table_rows = []
-        for row in rows:
+        active_count = 0
+        revoked_count = 0
+        device_total = 0
+        for index, row in enumerate(rows):
             devices = conn.execute("SELECT COUNT(*) FROM license_devices WHERE key = ?", (row["key"],)).fetchone()[0]
-            status_class = "status-active" if row["status"] == "active" else "status-revoked"
+            device_total += int(devices)
+            is_active = row["status"] == "active"
+            active_count += 1 if is_active else 0
+            revoked_count += 0 if is_active else 1
+            status_class = "status-active" if is_active else "status-revoked"
             revoke = (
                 f"<form method='post' action='/admin/revoke' style='margin:0'>"
-                f"<input type='hidden' name='token' value='{token}'>"
-                f"<input type='hidden' name='license_key' value='{row['key']}'>"
-                f"<button type='submit' style='margin:0;padding:8px 10px'>Отозвать</button>"
+                f"<input type='hidden' name='token' value='{ha(token)}'>"
+                f"<input type='hidden' name='license_key' value='{ha(row['key'])}'>"
+                f"<button class='button danger' type='submit' style='margin:0;padding:10px 12px'>Отозвать</button>"
                 f"</form>"
             )
             table_rows.append(
                 f"""
-                <tr>
-                  <td class="key-cell"><code class="copy key-pill" title="{row['key']}">{row['key']}</code></td>
-                  <td>{row['owner']}</td>
-                  <td><span class="{status_class}">{row['status']}</span></td>
-                  <td>{devices}/{row['max_devices']}</td>
-                  <td>{row['expires_at']}</td>
-                  <td class="actions">{revoke if row['status'] == 'active' else ''}</td>
-                </tr>
+                <article class="key-item" data-animate style="--i:{index}">
+                  <div>
+                    <div class="key-label">Ключ</div>
+                    <button class="key-code" type="button" data-copy="{ha(row['key'])}">{h(row['key'])}</button>
+                  </div>
+                  <div>
+                    <div class="key-label">Клиент</div>
+                    <div class="key-value">{h(row['owner'])}</div>
+                  </div>
+                  <div>
+                    <div class="key-label">Статус</div>
+                    <div class="status {status_class}">{h(row['status'])}</div>
+                  </div>
+                  <div>
+                    <div class="key-label">Устройства</div>
+                    <div class="key-value">{int(devices)}/{int(row['max_devices'])}</div>
+                  </div>
+                  <div>
+                    <div class="key-label">До</div>
+                    <div class="key-value">{h(row['expires_at'])}</div>
+                  </div>
+                  <div>{revoke if is_active else ''}</div>
+                </article>
                 """
             )
 
     created_block = (
-        f"<div class='card' style='border-color:rgba(57,255,154,.45);margin-bottom:18px'>"
-        f"<p style='margin:0;color:var(--green);font-weight:800'>Создан ключ:</p>"
-        f"<code class='copy key-created'>{created}</code></div>"
+        f"<section class='bento-card created-key wide' data-animate>"
+        f"<p>Создан ключ</p>"
+        f"<button class='key-created' type='button' data-copy='{ha(created)}'>{h(created)}</button>"
+        f"</section>"
         if created
         else ""
     )
     backup_files = list_backup_files()[:8]
     backup_items = "".join(
-        f"<li><a href='/admin/backup/file/{item.name}?token={token}' style='color:var(--pink)'>{item.name}</a></li>"
+        f"<li><a href='{ha('/admin/backup/file/' + item.name + '?' + urlencode({'token': token}))}'>{h(item.name)}</a></li>"
         for item in backup_files
-    ) or "<li style='color:var(--muted)'>Бэкапов пока нет.</li>"
-    rows_html = "\n".join(table_rows) or "<tr><td colspan='6'>Ключей пока нет.</td></tr>"
+    ) or "<li>Бэкапов пока нет.</li>"
+    rows_html = "\n".join(table_rows) or "<div class='empty-state'>Ключей пока нет. Создайте первый ключ слева.</div>"
     storage_warning = (
-        "<div class='notice'><b>Если ключи пропадают после деплоя:</b> подключите Railway Volume "
+        "<div class='notice wide' data-animate><b>Если ключи пропадают после деплоя:</b> подключите Railway Volume "
         "и задайте переменные <code>LICENSE_DB_PATH=/data/licenses.db</code> и "
         "<code>LICENSE_BACKUP_DIR=/data/backups</code>. Без постоянного диска SQLite может "
         "очищаться при пересборке контейнера.</div>"
-        if not DB_PATH.is_absolute()
+        if not Path(str(DB_PATH)).is_absolute() or str(DB_PATH).startswith(str(Path(__file__).resolve().parent))
         else ""
     )
     return html_page(
         "AutoPiar Admin",
         f"""
-        <h1>Панель лицензий AutoPiar</h1>
-        <p>Создавайте ключи, ограничивайте срок и количество устройств. Клиент вводит только ключ.</p>
+        <section class="hero" data-animate>
+          <div class="hero-copy">
+            <div class="hero-kicker">control room</div>
+            <h1>Панель<br>лицензий</h1>
+            <p>Создавайте много ключей, отслеживайте устройства и сохраняйте бэкапы базы. Клиент вводит только ключ.</p>
+            <div class="hero-meta">
+              <span class="pill"><span class="dot"></span> active: {active_count}</span>
+              <span class="pill">revoked: {revoked_count}</span>
+              <span class="pill">devices: {device_total}</span>
+            </div>
+          </div>
+        </section>
         {storage_warning}
         {created_block}
         <div class="grid">
-          <form method="post" action="/admin/create" class="card">
-            <input type="hidden" name="token" value="{token}">
-            <h2 style="margin-top:0">Создать ключ</h2>
+          <form method="post" action="/admin/create" class="bento-card" data-animate style="--i:1">
+            <input type="hidden" name="token" value="{ha(token)}">
+            <h2>Создать ключ</h2>
+            <p>Новый ключ добавится в общий список, старые ключи не перезаписываются.</p>
             <label>Клиент / заметка</label>
             <input name="owner" value="client">
             <label>Срок, дней</label>
@@ -350,24 +565,29 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
             <select name="license_type"><option value="user">user</option><option value="dev">dev</option></select>
             <button type="submit">Создать ключ</button>
           </form>
-          <section class="card">
-            <h2 style="margin-top:0">Бэкапы</h2>
+          <section class="bento-card" data-animate style="--i:2">
+            <h2>Бэкапы</h2>
             <p>Скачайте БД перед переносом на другой хостинг. JSON удобен для миграции в другую БД.</p>
-            <a class="button" href="/admin/backup/download?token={token}">Скачать SQLite</a>
-            <a class="button" href="/admin/export.json?token={token}">Экспорт JSON</a>
+            <div class="button-row">
+              <a class="button" href="/admin/backup/download?{ha(urlencode({'token': token}))}">Скачать SQLite</a>
+              <a class="button secondary" href="/admin/export.json?{ha(urlencode({'token': token}))}">Экспорт JSON</a>
+            </div>
             <form method="post" action="/admin/backup/create" style="margin-top:10px">
-              <input type="hidden" name="token" value="{token}">
+              <input type="hidden" name="token" value="{ha(token)}">
               <button type="submit">Создать snapshot</button>
             </form>
-            <ul style="padding-left:18px;line-height:1.8">{backup_items}</ul>
+            <ul class="backup-list">{backup_items}</ul>
           </section>
-          <section class="card wide">
-            <h2 style="margin-top:0">Ключи</h2>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Ключ</th><th>Клиент</th><th>Статус</th><th>Устройства</th><th>До</th><th></th></tr></thead>
-                <tbody>{rows_html}</tbody>
-              </table>
+          <section class="bento-card wide" data-animate style="--i:3">
+            <div class="stats">
+              <div class="stat"><b>{len(rows)}</b><span>ключей всего</span></div>
+              <div class="stat"><b>{active_count}</b><span>активных</span></div>
+              <div class="stat"><b>{device_total}</b><span>устройств</span></div>
+            </div>
+            <h2>Ключи</h2>
+            <p>Список не обрезается: скролльте внутри блока, нажмите на ключ для копирования.</p>
+            <div class="keys-shell">
+              <div class="keys-list">{rows_html}</div>
             </div>
           </section>
         </div>
@@ -485,7 +705,7 @@ def admin_create_key(
         license_type=license_type,
     )
     created = create_key(payload)["license"]["key"]
-    return RedirectResponse(url=f"/admin?token={token}&created={created}", status_code=303)
+    return RedirectResponse(url=admin_url(token, created=created), status_code=303)
 
 
 @app.get("/admin/export.json")
@@ -516,7 +736,7 @@ def admin_create_backup(token: str = Form(...)):
     if not is_admin_token(token):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     create_sqlite_backup("manual")
-    return RedirectResponse(url=f"/admin?token={token}", status_code=303)
+    return RedirectResponse(url=admin_url(token), status_code=303)
 
 
 @app.get("/admin/backup/file/{filename}")
@@ -561,4 +781,4 @@ def admin_revoke_key(token: str = Form(...), license_key: str = Form(...)):
     if not is_admin_token(token):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     revoke_key(license_key)
-    return RedirectResponse(url=f"/admin?token={token}", status_code=303)
+    return RedirectResponse(url=admin_url(token), status_code=303)
