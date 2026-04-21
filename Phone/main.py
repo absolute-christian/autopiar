@@ -3,7 +3,9 @@ import asyncio
 import html
 import os
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from telethon import TelegramClient
@@ -11,6 +13,12 @@ from telethon.errors import FloodWaitError, PhoneCodeInvalidError, SessionPasswo
 from telethon.helpers import add_surrogate
 from telethon.tl.functions.messages import GetForumTopicsRequest, SendMessageRequest
 from telethon.tl.types import InputReplyToMessage, MessageEntityCustomEmoji
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from online_license import require_cli_license
 
 
 API_ID = int(os.getenv("API_ID", "0"))
@@ -407,6 +415,12 @@ async def choose_targets(client: TelegramClient) -> list[dict]:
 
 async def main():
     banner()
+    license_result = require_cli_license()
+    if not license_result.ok:
+        error(license_result.message)
+        return
+    success("Лицензия активна.")
+
     if not API_ID or not API_HASH:
         error("Заполните API_ID и API_HASH в main.py или переменных окружения.")
         return

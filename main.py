@@ -64,6 +64,8 @@ from telethon.tl.functions.messages import GetForumTopicsRequest
 from telethon.tl.functions.messages import SendMessageRequest
 from telethon.tl.types import InputReplyToMessage
 
+from online_license import load_license_config, save_license_config, verify_online_license
+
 
 TG_EMOJI_RE = re.compile(
     r'<tg-emoji\b[^>]*\bemoji-id\s*=\s*(?:"(\d+)"|\'(\d+)\'|(\d+))[^>]*>(.*?)</tg-emoji>',
@@ -2219,8 +2221,154 @@ class NeonMainWindow(QtWidgets.QMainWindow):
         event.accept()
 
 
+class OnlineLicenseDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Лицензия AutoPiar")
+        self.setModal(True)
+        self.resize(500, 340)
+
+        config = load_license_config()
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        title = QtWidgets.QLabel("Проверка лицензии")
+        title.setObjectName("licenseTitle")
+        subtitle = QtWidgets.QLabel("Введите адрес сервера лицензий и ключ. Без успешной проверки приложение не откроется.")
+        subtitle.setObjectName("licenseHint")
+        subtitle.setWordWrap(True)
+
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(10)
+        self.in_server_url = QtWidgets.QLineEdit(config.get("server_url", ""))
+        self.in_server_url.setPlaceholderText("https://your-domain.com")
+        self.in_key = QtWidgets.QLineEdit(config.get("license_key", ""))
+        self.in_key.setPlaceholderText("AP-...")
+        form.addRow("Сервер:", self.in_server_url)
+        form.addRow("Ключ:", self.in_key)
+
+        self.lbl_status = QtWidgets.QLabel("Ожидание проверки.")
+        self.lbl_status.setObjectName("licenseStatus")
+        self.lbl_status.setWordWrap(True)
+
+        self.btn_check = QtWidgets.QPushButton("Проверить")
+        self.btn_exit = QtWidgets.QPushButton("Выход")
+        self.btn_check.clicked.connect(self.check_license)
+        self.btn_exit.clicked.connect(self.reject)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(self.btn_check)
+        row.addWidget(self.btn_exit)
+
+        root.addWidget(title)
+        root.addWidget(subtitle)
+        root.addLayout(form)
+        root.addWidget(self.lbl_status)
+        root.addLayout(row)
+
+        self._apply_license_style()
+        QtCore.QTimer.singleShot(150, self.check_license)
+
+    def _apply_license_style(self):
+        self.setStyleSheet("""
+            QDialog {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                            stop:0 #06040F,
+                                            stop:0.55 #120B31,
+                                            stop:1 #24106E);
+                color: #EAF1FF;
+                font-family: Segoe UI, Arial, sans-serif;
+                font-size: 13px;
+            }
+            QLabel {
+                color: #EAF1FF;
+                background: transparent;
+            }
+            QLabel#licenseTitle {
+                color: #FFFFFF;
+                font-size: 20px;
+                font-weight: 900;
+            }
+            QLabel#licenseHint {
+                color: rgba(255, 220, 254, 205);
+            }
+            QLabel#licenseStatus {
+                background: rgba(5, 4, 18, 210);
+                border: 1px solid rgba(255, 159, 252, 150);
+                border-radius: 12px;
+                padding: 10px;
+                color: #F8FBFF;
+            }
+            QLineEdit {
+                background-color: rgba(5, 4, 18, 245);
+                border: 1px solid rgba(82, 39, 255, 170);
+                border-radius: 12px;
+                color: #F8FBFF;
+                padding: 10px;
+            }
+            QLineEdit:focus {
+                border: 1px solid rgba(255, 159, 252, 230);
+            }
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                            stop:0 #5227FF,
+                                            stop:1 #FF9FFC);
+                border: none;
+                border-radius: 12px;
+                padding: 10px 16px;
+                font-weight: 800;
+                color: #100A24;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                            stop:0 #6A45FF,
+                                            stop:1 #FFB7FD);
+            }
+            QPushButton:disabled {
+                background: rgba(52, 35, 90, 150);
+                color: rgba(230, 220, 245, 120);
+            }
+        """)
+
+    def _set_status(self, message: str, ok: Optional[bool] = None):
+        self.lbl_status.setText(message)
+        if ok is True:
+            self.lbl_status.setStyleSheet(
+                "background:rgba(20,70,49,210);border:1px solid rgba(57,255,154,180);"
+                "border-radius:12px;padding:10px;color:#DFFFF0;"
+            )
+        elif ok is False:
+            self.lbl_status.setStyleSheet(
+                "background:rgba(80,24,42,210);border:1px solid rgba(255,77,125,190);"
+                "border-radius:12px;padding:10px;color:#FFE3EA;"
+            )
+
+    def check_license(self):
+        server_url = self.in_server_url.text().strip()
+        license_key = self.in_key.text().strip()
+        if not server_url or not license_key:
+            self._set_status("Введите адрес сервера и лицензионный ключ.", False)
+            return
+
+        self.btn_check.setEnabled(False)
+        self._set_status("Проверяю ключ на сервере...", None)
+        QtWidgets.QApplication.processEvents()
+
+        result = verify_online_license(server_url, license_key)
+        self.btn_check.setEnabled(True)
+        self._set_status(result.message, result.ok)
+        if result.ok:
+            save_license_config(server_url, license_key)
+            self.accept()
+
+
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    if OnlineLicenseDialog().exec_() != QtWidgets.QDialog.Accepted:
+        sys.exit(0)
     w = NeonMainWindow()
     w.show()
     sys.exit(app.exec_())

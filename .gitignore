@@ -27,6 +27,10 @@ dist/*.session-journal
 license.json
 dev_license.json
 dist/license.json
+license_server/*.db
+license_server/*.db-journal
+license_server/*.sqlite
+license_server/*.sqlite3
 
 # Editor / OS
 .idea/
