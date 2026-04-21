@@ -13,9 +13,17 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field
 
 
-DEFAULT_DATA_DIR = Path(os.getenv("LICENSE_DATA_DIR", "")).expanduser() if os.getenv("LICENSE_DATA_DIR") else Path(__file__).resolve().parent
-if Path("/data").exists() and not os.getenv("LICENSE_DATA_DIR"):
+configured_data_dir = os.getenv("LICENSE_DATA_DIR", "").strip()
+railway_volume_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+
+if configured_data_dir:
+    DEFAULT_DATA_DIR = Path(configured_data_dir).expanduser()
+elif railway_volume_path:
+    DEFAULT_DATA_DIR = Path(railway_volume_path).expanduser()
+elif Path("/data").exists():
     DEFAULT_DATA_DIR = Path("/data")
+else:
+    DEFAULT_DATA_DIR = Path(__file__).resolve().parent
 
 DB_PATH = Path(os.getenv("LICENSE_DB_PATH", str(DEFAULT_DATA_DIR / "licenses.db"))).expanduser()
 BACKUP_DIR = Path(os.getenv("LICENSE_BACKUP_DIR", str(DEFAULT_DATA_DIR / "backups"))).expanduser()
