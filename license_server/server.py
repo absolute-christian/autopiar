@@ -41,13 +41,19 @@ def html_page(title: str, body: str) -> HTMLResponse:
         radial-gradient(circle at 80% 0%, rgba(255,159,252,.18), transparent 26%),
         linear-gradient(135deg, #05030D, #120B31 55%, #24106E);
     }}
-    main {{ max-width:1240px; margin:0 auto; padding:32px 18px; }}
+    main {{ max-width:1360px; margin:0 auto; padding:32px 18px; }}
     h1 {{ margin:0 0 8px; font-size:30px; letter-spacing:.2px; }}
     p {{ color:var(--muted); }}
-    .grid {{ display:grid; grid-template-columns:360px minmax(0, 1fr); gap:18px; align-items:start; }}
+    .grid {{ display:grid; grid-template-columns:minmax(320px, 360px) minmax(560px, 1fr); gap:18px; align-items:start; }}
+    .wide {{ grid-column:1 / -1; }}
     .card {{
       background:rgba(12,8,38,.86); border:1px solid rgba(255,159,252,.22);
       border-radius:22px; padding:18px; box-shadow:0 18px 70px rgba(0,0,0,.35);
+    }}
+    .notice {{
+      margin:0 0 18px; padding:14px 16px; border-radius:18px;
+      border:1px solid rgba(255,159,252,.28); background:rgba(255,159,252,.08);
+      color:var(--muted);
     }}
     label {{ display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }}
     input, select {{
@@ -62,22 +68,28 @@ def html_page(title: str, body: str) -> HTMLResponse:
       white-space:nowrap;
     }}
     .table-wrap {{ width:100%; overflow-x:auto; border-radius:18px; }}
-    table {{ width:100%; min-width:820px; border-collapse:collapse; }}
+    table {{ width:100%; min-width:1080px; border-collapse:collapse; }}
     th, td {{ text-align:left; padding:12px; border-bottom:1px solid rgba(255,255,255,.08); vertical-align:middle; }}
     th {{ color:#fff; background:rgba(82,39,255,.24); font-size:12px; }}
     td {{ color:#EAF1FF; font-size:13px; }}
     code {{ color:var(--pink); }}
+    .key-cell {{ min-width:420px; width:44%; }}
     .key-pill {{
-      display:inline-block; max-width:280px; overflow:hidden; text-overflow:ellipsis;
+      display:inline-block; max-width:min(620px, 52vw); overflow:hidden; text-overflow:ellipsis;
       white-space:nowrap; padding:7px 9px; border-radius:10px;
       background:rgba(255,159,252,.08); border:1px solid rgba(255,159,252,.18);
       font-family:Consolas, monospace;
+    }}
+    .key-created {{
+      display:block; margin-top:8px; max-width:100%; overflow:auto; white-space:nowrap;
+      padding:10px 12px; border-radius:12px; background:rgba(57,255,154,.08);
+      border:1px solid rgba(57,255,154,.22); font-family:Consolas, monospace;
     }}
     .actions {{ width:120px; text-align:right; }}
     .status-active {{ color:var(--green); font-weight:800; }}
     .status-revoked {{ color:var(--red); font-weight:800; }}
     .copy {{ user-select:all; }}
-    @media (max-width: 860px) {{ .grid {{ grid-template-columns:1fr; }} table {{ display:block; overflow-x:auto; }} }}
+    @media (max-width: 980px) {{ .grid {{ grid-template-columns:1fr; }} .wide {{ grid-column:auto; }} table {{ display:block; overflow-x:auto; }} }}
   </style>
 </head>
 <body>
@@ -286,7 +298,7 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
             table_rows.append(
                 f"""
                 <tr>
-                  <td><code class="copy key-pill" title="{row['key']}">{row['key']}</code></td>
+                  <td class="key-cell"><code class="copy key-pill" title="{row['key']}">{row['key']}</code></td>
                   <td>{row['owner']}</td>
                   <td><span class="{status_class}">{row['status']}</span></td>
                   <td>{devices}/{row['max_devices']}</td>
@@ -299,7 +311,7 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
     created_block = (
         f"<div class='card' style='border-color:rgba(57,255,154,.45);margin-bottom:18px'>"
         f"<p style='margin:0;color:var(--green);font-weight:800'>Создан ключ:</p>"
-        f"<code class='copy'>{created}</code></div>"
+        f"<code class='copy key-created'>{created}</code></div>"
         if created
         else ""
     )
@@ -309,11 +321,20 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
         for item in backup_files
     ) or "<li style='color:var(--muted)'>Бэкапов пока нет.</li>"
     rows_html = "\n".join(table_rows) or "<tr><td colspan='6'>Ключей пока нет.</td></tr>"
+    storage_warning = (
+        "<div class='notice'><b>Если ключи пропадают после деплоя:</b> подключите Railway Volume "
+        "и задайте переменные <code>LICENSE_DB_PATH=/data/licenses.db</code> и "
+        "<code>LICENSE_BACKUP_DIR=/data/backups</code>. Без постоянного диска SQLite может "
+        "очищаться при пересборке контейнера.</div>"
+        if not DB_PATH.is_absolute()
+        else ""
+    )
     return html_page(
         "AutoPiar Admin",
         f"""
         <h1>Панель лицензий AutoPiar</h1>
         <p>Создавайте ключи, ограничивайте срок и количество устройств. Клиент вводит только ключ.</p>
+        {storage_warning}
         {created_block}
         <div class="grid">
           <form method="post" action="/admin/create" class="card">
@@ -340,7 +361,7 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
             </form>
             <ul style="padding-left:18px;line-height:1.8">{backup_items}</ul>
           </section>
-          <section class="card">
+          <section class="card wide">
             <h2 style="margin-top:0">Ключи</h2>
             <div class="table-wrap">
               <table>
