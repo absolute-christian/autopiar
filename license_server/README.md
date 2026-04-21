@@ -33,6 +33,29 @@ export LICENSE_ADMIN_TOKEN="change-me"
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
+## Railway
+
+В репозитории уже есть `nixpacks.toml` и `railway.json`, поэтому Railway должен запускать сервер командой:
+
+```bash
+cd license_server && python -m uvicorn server:app --host 0.0.0.0 --port $PORT
+```
+
+Если в Railway вручную задан `Start Command`, очистите его или поставьте ровно команду выше.
+
+Обязательно добавьте переменную окружения:
+
+```text
+LICENSE_ADMIN_TOKEN=любой_сложный_пароль
+```
+
+После деплоя проверьте:
+
+```text
+https://your-service.up.railway.app/health
+https://your-service.up.railway.app/admin
+```
+
 ## Админ-панель
 
 Откройте в браузере:
