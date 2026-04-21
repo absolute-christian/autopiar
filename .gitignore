@@ -34,6 +34,7 @@ license_server/*.db
 license_server/*.db-journal
 license_server/*.sqlite
 license_server/*.sqlite3
+license_server/backups/
 
 # Editor / OS
 .idea/

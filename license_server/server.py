@@ -1,16 +1,18 @@
 import os
 import secrets
 import sqlite3
+import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 
 DB_PATH = Path(os.getenv("LICENSE_DB_PATH", "licenses.db"))
+BACKUP_DIR = Path(os.getenv("LICENSE_BACKUP_DIR", "backups"))
 ADMIN_TOKEN = os.getenv("LICENSE_ADMIN_TOKEN", "")
 PRODUCT_ID = os.getenv("LICENSE_PRODUCT_ID", "autopiar")
 
@@ -144,6 +146,53 @@ def init_db() -> None:
         conn.commit()
 
 
+def safe_backup_label(label: str) -> str:
+    clean = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(label or "manual"))
+    return clean[:48] or "manual"
+
+
+def create_sqlite_backup(label: str = "manual") -> Path:
+    init_db()
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = utc_now().strftime("%Y%m%d-%H%M%S")
+    backup_path = BACKUP_DIR / f"licenses-{stamp}-{safe_backup_label(label)}.db"
+    source = sqlite3.connect(DB_PATH)
+    try:
+        dest = sqlite3.connect(backup_path)
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        source.close()
+    return backup_path
+
+
+def list_backup_files() -> list[Path]:
+    if not BACKUP_DIR.exists():
+        return []
+    return sorted(BACKUP_DIR.glob("licenses-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def export_license_data() -> dict:
+    init_db()
+    with connect() as conn:
+        keys = [
+            dict(row)
+            for row in conn.execute("SELECT * FROM license_keys ORDER BY created_at DESC").fetchall()
+        ]
+        devices = [
+            dict(row)
+            for row in conn.execute("SELECT * FROM license_devices ORDER BY last_seen_at DESC").fetchall()
+        ]
+    return {
+        "product": PRODUCT_ID,
+        "exported_at": utc_iso(utc_now()),
+        "license_keys": keys,
+        "license_devices": devices,
+    }
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -245,6 +294,11 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
         if created
         else ""
     )
+    backup_files = list_backup_files()[:8]
+    backup_items = "".join(
+        f"<li><a href='/admin/backup/file/{item.name}?token={token}' style='color:var(--pink)'>{item.name}</a></li>"
+        for item in backup_files
+    ) or "<li style='color:var(--muted)'>Бэкапов пока нет.</li>"
     rows_html = "\n".join(table_rows) or "<tr><td colspan='6'>Ключей пока нет.</td></tr>"
     return html_page(
         "AutoPiar Admin",
@@ -266,6 +320,17 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
             <select name="license_type"><option value="user">user</option><option value="dev">dev</option></select>
             <button type="submit">Создать ключ</button>
           </form>
+          <section class="card">
+            <h2 style="margin-top:0">Бэкапы</h2>
+            <p>Скачайте БД перед переносом на другой хостинг. JSON удобен для миграции в другую БД.</p>
+            <a class="button" href="/admin/backup/download?token={token}">Скачать SQLite</a>
+            <a class="button" href="/admin/export.json?token={token}">Экспорт JSON</a>
+            <form method="post" action="/admin/backup/create" style="margin-top:10px">
+              <input type="hidden" name="token" value="{token}">
+              <button type="submit">Создать snapshot</button>
+            </form>
+            <ul style="padding-left:18px;line-height:1.8">{backup_items}</ul>
+          </section>
           <section class="card">
             <h2 style="margin-top:0">Ключи</h2>
             <table>
@@ -327,6 +392,12 @@ def activate(payload: ActivateRequest) -> dict:
             )
         conn.commit()
 
+    if existing is None:
+        try:
+            create_sqlite_backup("activation")
+        except Exception:
+            pass
+
     return {
         "ok": True,
         "message": "Лицензия активна.",
@@ -358,6 +429,10 @@ def create_key(payload: CreateKeyRequest) -> dict:
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="Key already exists.")
         row = conn.execute("SELECT * FROM license_keys WHERE key = ?", (key,)).fetchone()
+    try:
+        create_sqlite_backup("create_key")
+    except Exception:
+        pass
     return {"ok": True, "license": public_license_row(row)}
 
 
@@ -381,6 +456,49 @@ def admin_create_key(
     return RedirectResponse(url=f"/admin?token={token}&created={created}", status_code=303)
 
 
+@app.get("/admin/export.json")
+def admin_export_json(token: str = Query(default="")):
+    if not is_admin_token(token):
+        raise HTTPException(status_code=401, detail="Invalid admin token.")
+    data = export_license_data()
+    headers = {
+        "Content-Disposition": f"attachment; filename=autopiar-licenses-{utc_now().strftime('%Y%m%d-%H%M%S')}.json"
+    }
+    return JSONResponse(content=data, headers=headers)
+
+
+@app.get("/admin/backup/download")
+def admin_download_current_db(token: str = Query(default="")):
+    if not is_admin_token(token):
+        raise HTTPException(status_code=401, detail="Invalid admin token.")
+    backup_path = create_sqlite_backup("download")
+    return FileResponse(
+        backup_path,
+        media_type="application/octet-stream",
+        filename=backup_path.name,
+    )
+
+
+@app.post("/admin/backup/create")
+def admin_create_backup(token: str = Form(...)):
+    if not is_admin_token(token):
+        raise HTTPException(status_code=401, detail="Invalid admin token.")
+    create_sqlite_backup("manual")
+    return RedirectResponse(url=f"/admin?token={token}", status_code=303)
+
+
+@app.get("/admin/backup/file/{filename}")
+def admin_download_backup_file(filename: str, token: str = Query(default="")):
+    if not is_admin_token(token):
+        raise HTTPException(status_code=401, detail="Invalid admin token.")
+    if "/" in filename or "\\" in filename or not filename.endswith(".db"):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    path = BACKUP_DIR / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Backup not found.")
+    return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+
+
 @app.get("/admin/keys", dependencies=[Depends(require_admin)])
 def list_keys() -> dict:
     init_db()
@@ -399,6 +517,10 @@ def revoke_key(license_key: str) -> dict:
     with connect() as conn:
         conn.execute("UPDATE license_keys SET status = 'revoked' WHERE key = ?", (license_key,))
         conn.commit()
+    try:
+        create_sqlite_backup("revoke_key")
+    except Exception:
+        pass
     return {"ok": True}
 
 
