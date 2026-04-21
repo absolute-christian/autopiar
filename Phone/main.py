@@ -4,6 +4,7 @@ import html
 import os
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,10 @@ from typing import Optional
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, PhoneCodeInvalidError, SessionPasswordNeededError
 from telethon.helpers import add_surrogate
+try:
+    from telethon.tl.functions.messages import GetDialogFiltersRequest
+except Exception:
+    GetDialogFiltersRequest = None
 from telethon.tl.functions.messages import GetForumTopicsRequest, SendMessageRequest
 from telethon.tl.types import InputReplyToMessage, MessageEntityCustomEmoji
 
@@ -31,6 +36,12 @@ COLOR_ENABLED = os.getenv("NO_COLOR", "").strip() == ""
 TG_EMOJI_RE = re.compile(
     r'<tg-emoji\b[^>]*\bemoji-id\s*=\s*(?:"(\d+)"|\'(\d+)\'|(\d+))[^>]*>(.*?)</tg-emoji>',
     re.IGNORECASE | re.DOTALL,
+)
+
+EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),
+    (0x2600, 0x27BF),
+    (0xFE00, 0xFE0F),
 )
 
 
@@ -88,6 +99,19 @@ class ChatItem:
     is_user: bool
     is_group: bool
     is_channel: bool
+    is_broadcast: bool = False
+    is_bot: bool = False
+    is_contact: bool = False
+    folder_id: int = 0
+    folder_title: str = "Все чаты"
+
+
+@dataclass
+class FolderItem:
+    id: int
+    title: str
+    count: int
+    peer_ids: list[int]
 
 
 @dataclass
@@ -97,6 +121,83 @@ class ForumTopicItem:
     topic_id: int
     top_message_id: int
     title: str
+
+
+def telegram_plain_text(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "text"):
+        return str(getattr(value, "text") or "")
+    return str(value)
+
+
+def strip_emoji_text(value) -> str:
+    raw = TG_EMOJI_RE.sub("", telegram_plain_text(value))
+    cleaned = []
+    for ch in raw:
+        code = ord(ch)
+        if code == 0x200D:
+            continue
+        if any(start <= code <= end for start, end in EMOJI_RANGES):
+            continue
+        if unicodedata.category(ch) == "So":
+            continue
+        cleaned.append(ch)
+    return re.sub(r"\s+", " ", "".join(cleaned)).strip()
+
+
+def peer_local_id(peer) -> Optional[int]:
+    if peer is None:
+        return None
+    nested_peer = getattr(peer, "peer", None)
+    if nested_peer is not None:
+        nested_id = peer_local_id(nested_peer)
+        if nested_id is not None:
+            return nested_id
+    for attr in ("user_id", "chat_id", "channel_id", "id"):
+        value = getattr(peer, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                return None
+    return None
+
+
+def dialog_filter_peer_ids(dialog_filter, attrs=("include_peers", "pinned_peers")) -> set[int]:
+    ids = set()
+    for attr in attrs:
+        for peer in getattr(dialog_filter, attr, None) or []:
+            peer_id = peer_local_id(peer)
+            if peer_id is not None:
+                ids.add(peer_id)
+    return ids
+
+
+def dialog_matches_telegram_filter(row: dict, dialog_filter, explicit_peer_ids: set[int], excluded_peer_ids: set[int]) -> bool:
+    peer_id = int(row.get("peer_id") or 0)
+    if peer_id in excluded_peer_ids:
+        return False
+    if peer_id in explicit_peer_ids:
+        return True
+
+    include_groups = bool(getattr(dialog_filter, "groups", False) or getattr(dialog_filter, "include_groups", False))
+    include_broadcasts = bool(getattr(dialog_filter, "broadcasts", False) or getattr(dialog_filter, "include_broadcasts", False))
+    include_bots = bool(getattr(dialog_filter, "bots", False) or getattr(dialog_filter, "include_bots", False))
+    include_contacts = bool(getattr(dialog_filter, "contacts", False) or getattr(dialog_filter, "include_contacts", False))
+    include_non_contacts = bool(getattr(dialog_filter, "non_contacts", False) or getattr(dialog_filter, "include_non_contacts", False))
+
+    if bool(row.get("is_group")) and include_groups:
+        return True
+    if bool(row.get("is_broadcast")) and include_broadcasts:
+        return True
+    if bool(row.get("is_bot")) and include_bots:
+        return True
+    if bool(row.get("is_user")) and bool(row.get("is_contact")) and include_contacts:
+        return True
+    if bool(row.get("is_user")) and not bool(row.get("is_contact")) and not bool(row.get("is_bot")) and include_non_contacts:
+        return True
+    return False
 
 
 def parse_tg_emoji_html(text: str):
@@ -240,11 +341,38 @@ async def ensure_login(client: TelegramClient):
                 return
 
 
-async def load_chats(client: TelegramClient) -> list[ChatItem]:
-    section("Чаты")
-    info("Загружаю чаты...")
-    dialogs = await client.get_dialogs(limit=200)
+async def load_chats_and_folders(client: TelegramClient) -> tuple[list[ChatItem], list[FolderItem]]:
+    section("Папки")
+    info("Загружаю папки Telegram...")
+    folder_names = {0: "Все чаты"}
+    folder_filters = []
+    if GetDialogFiltersRequest is not None:
+        try:
+            result = await client(GetDialogFiltersRequest())
+            filters = getattr(result, "filters", result)
+            for item in filters:
+                folder_id = getattr(item, "id", None)
+                title = getattr(item, "title", None)
+                if folder_id is None or not title:
+                    continue
+                clean_title = strip_emoji_text(title) or f"Папка {folder_id}"
+                folder_names[int(folder_id)] = clean_title
+                folder_filters.append(
+                    {
+                        "id": int(folder_id),
+                        "title": clean_title,
+                        "filter": item,
+                        "explicit_peer_ids": dialog_filter_peer_ids(item),
+                        "excluded_peer_ids": dialog_filter_peer_ids(item, ("exclude_peers",)),
+                    }
+                )
+        except Exception as exc:
+            warn(f"Не удалось загрузить папки Telegram: {type(exc).__name__}: {exc}")
+
+    dialogs = await client.get_dialogs(limit=500)
     items = []
+    dialog_rows = []
+    folder_counts = {folder_id: 0 for folder_id in folder_names}
     for dialog in dialogs:
         ent = dialog.entity
         title = dialog.name or getattr(ent, "title", None) or getattr(ent, "first_name", "") or "Без названия"
@@ -255,17 +383,69 @@ async def load_chats(client: TelegramClient) -> list[ChatItem]:
         is_user = cls_name.endswith("user")
         is_channel = cls_name.endswith("channel")
         is_group = ("chat" in cls_name) or (is_channel and getattr(ent, "megagroup", False))
-        items.append(ChatItem(str(title), int(peer_id), bool(is_user), bool(is_group), bool(is_channel)))
-    return items
+        is_broadcast = bool(is_channel and not getattr(ent, "megagroup", False))
+        is_bot = bool(getattr(ent, "bot", False))
+        is_contact = bool(getattr(ent, "contact", False))
+        folder_id = int(getattr(dialog, "folder_id", None) or 0)
+        folder_title = folder_names.get(folder_id, f"Папка {folder_id}")
+        folder_counts[folder_id] = folder_counts.get(folder_id, 0) + 1
+        chat_item = ChatItem(
+            str(title),
+            int(peer_id),
+            bool(is_user),
+            bool(is_group),
+            bool(is_channel),
+            bool(is_broadcast),
+            bool(is_bot),
+            bool(is_contact),
+            folder_id,
+            folder_title,
+        )
+        items.append(chat_item)
+        dialog_rows.append(
+            {
+                "peer_id": int(peer_id),
+                "is_user": bool(is_user),
+                "is_group": bool(is_group),
+                "is_broadcast": bool(is_broadcast),
+                "is_bot": bool(is_bot),
+                "is_contact": bool(is_contact),
+            }
+        )
+
+    folder_peer_ids = {0: [int(chat.peer_id) for chat in items]}
+    for folder in folder_filters:
+        folder_id = int(folder["id"])
+        explicit_ids = folder["explicit_peer_ids"]
+        excluded_ids = folder["excluded_peer_ids"]
+        filter_obj = folder["filter"]
+        matched = [
+            int(row["peer_id"])
+            for row in dialog_rows
+            if dialog_matches_telegram_filter(row, filter_obj, explicit_ids, excluded_ids)
+        ]
+        folder_peer_ids[folder_id] = matched
+        folder_counts[folder_id] = len(matched)
+
+    folders = [
+        FolderItem(
+            int(folder_id),
+            str(title),
+            int(folder_counts.get(folder_id, 0)),
+            folder_peer_ids.get(int(folder_id), []),
+        )
+        for folder_id, title in sorted(folder_names.items(), key=lambda pair: (pair[0], pair[1]))
+        if int(folder_counts.get(folder_id, 0)) > 0
+    ]
+    return items, folders
 
 
-def show_chats(chats: list[ChatItem]):
-    section("Список чатов")
-    for idx, chat in enumerate(chats, start=1):
-        kind = "user" if chat.is_user else ("group" if chat.is_group else "channel")
+def show_folders(folders: list[FolderItem]):
+    section("Папки Telegram")
+    for idx, folder in enumerate(folders, start=1):
         num = c(f"{idx:>3}", Style.violet, Style.bold)
-        meta = c(f"[{kind}] ID:{chat.peer_id}", Style.muted)
-        print(f"{num}  {c(chat.title, Style.white)}  {meta}")
+        meta = c(f"{folder.count} чатов", Style.muted)
+        print(f"{num}  {c(folder.title, Style.white)}  {meta}")
 
 
 async def load_forum_topics(client: TelegramClient, chats: list[ChatItem]) -> list[ForumTopicItem]:
@@ -368,10 +548,25 @@ async def auto_send_loop(client: TelegramClient, targets: list[dict], message: s
 
 
 async def choose_targets(client: TelegramClient) -> list[dict]:
-    chats = await load_chats(client)
-    show_chats(chats)
-    chat_indexes = ask_indexes("\nВыберите чаты через запятую или диапазон, например 1,3,5-8", len(chats))
-    selected_chats = [chats[i - 1] for i in chat_indexes]
+    chats, folders = await load_chats_and_folders(client)
+    if not folders:
+        warn("Папки Telegram не найдены.")
+        return []
+
+    show_folders(folders)
+    folder_indexes = ask_indexes("\nВыберите папки через запятую или диапазон, например 1,3,5-8", len(folders))
+    selected_folders = [folders[i - 1] for i in folder_indexes]
+    if not selected_folders:
+        return []
+
+    selected_peer_ids = set()
+    for folder in selected_folders:
+        selected_peer_ids.update(int(peer_id) for peer_id in folder.peer_ids)
+
+    selected_chats = [chat for chat in chats if int(chat.peer_id) in selected_peer_ids]
+    selected_titles = ", ".join(folder.title for folder in selected_folders)
+    success(f"Выбрано папок: {len(selected_folders)} | Чатов внутри: {len(selected_chats)}")
+    info(f"Папки: {selected_titles}")
 
     targets = []
     seen = set()
@@ -382,7 +577,7 @@ async def choose_targets(client: TelegramClient) -> list[dict]:
         seen.add(key)
         targets.append({"peer_id": int(chat.peer_id), "topic_id": None, "label": chat.title})
 
-    if selected_chats and ask("Загрузить форумные темы для выбранных чатов? y/n", "n").lower() == "y":
+    if selected_chats and ask("Загрузить форумные темы для выбранных папок? y/n", "n").lower() == "y":
         topics = await load_forum_topics(client, selected_chats)
         if topics:
             show_topics(topics)
