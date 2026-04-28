@@ -6,6 +6,7 @@ AutoPiar - утилита для автопостинга в Telegram через
 
 - `main.py` - PyQt5 desktop-приложение.
 - `Phone/main.py` - CLI/Termux версия.
+- `bot/autopiar_bot.py` - Telegram bot-интерфейс для управления Telethon аккаунтом.
 - `online_license.py` - online-проверка ключа лицензии.
 - `license_server/server.py` - FastAPI сервер лицензий с SQLite.
 - `main.spec` - сборка Windows exe через PyInstaller.

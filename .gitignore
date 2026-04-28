@@ -23,6 +23,7 @@ configs/
 dist/configs/
 dist/*.session
 dist/*.session-journal
+bot/data/
 
 # Local license/state files generated per installation
 license.json
