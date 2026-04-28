@@ -1,5 +1,6 @@
-PyQt5
-Telethon
-cryptography
-qrcode
-pillow
+PyQt5==5.15.11
+Telethon==1.43.2
+cryptography==47.0.0
+qrcode[pil]==8.2
+pillow==12.2.0
+pyinstaller==6.20.0

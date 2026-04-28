@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote, urlencode
 
-from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,8 @@ DB_PATH = Path(os.getenv("LICENSE_DB_PATH", str(DEFAULT_DATA_DIR / "licenses.db"
 BACKUP_DIR = Path(os.getenv("LICENSE_BACKUP_DIR", str(DEFAULT_DATA_DIR / "backups"))).expanduser()
 ADMIN_TOKEN = os.getenv("LICENSE_ADMIN_TOKEN", "")
 PRODUCT_ID = os.getenv("LICENSE_PRODUCT_ID", "autopiar")
+ADMIN_COOKIE_NAME = "autopiar_admin"
+ADMIN_COOKIE_SECURE = os.getenv("LICENSE_ADMIN_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes"}
 
 app = FastAPI(title="AutoPiar License Server", version="1.0.0")
 
@@ -413,10 +415,17 @@ def ha(value) -> str:
     return html_utils.escape(str(value or ""), quote=True)
 
 
-def admin_url(token: str, **params) -> str:
-    query = {"token": token}
-    query.update({key: value for key, value in params.items() if value is not None})
-    return "/admin?" + urlencode(query)
+def is_admin_request(request: Request) -> bool:
+    return is_admin_token(request.cookies.get(ADMIN_COOKIE_NAME, ""))
+
+
+def admin_url(**params) -> str:
+    query = urlencode({key: value for key, value in params.items() if value is not None})
+    return "/admin" + (f"?{query}" if query else "")
+
+
+def redirect_admin(**params) -> RedirectResponse:
+    return RedirectResponse(url=admin_url(**params), status_code=303)
 
 
 def count_key_devices(conn: sqlite3.Connection, license_key: str) -> int:
@@ -519,11 +528,51 @@ def index() -> HTMLResponse:
     )
 
 
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page(token: str = Query(default=""), created: str = Query(default="")) -> HTMLResponse:
+@app.post("/admin/login")
+def admin_login(token: str = Form(...)) -> RedirectResponse:
     if not is_admin_token(token):
+        return RedirectResponse(url="/admin?login_error=1", status_code=303)
+    response = redirect_admin()
+    response.set_cookie(
+        ADMIN_COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=ADMIN_COOKIE_SECURE,
+        max_age=60 * 60 * 24 * 30,
+    )
+    return response
+
+
+@app.post("/admin/logout")
+def admin_logout() -> RedirectResponse:
+    response = RedirectResponse(url="/admin", status_code=303)
+    response.delete_cookie(ADMIN_COOKIE_NAME)
+    return response
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(
+    request: Request,
+    token: str = Query(default=""),
+    login_error: int = Query(default=0),
+    created: str = Query(default=""),
+):
+    if token and is_admin_token(token):
+        response = redirect_admin(created=created or None)
+        response.set_cookie(
+            ADMIN_COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="lax",
+            secure=ADMIN_COOKIE_SECURE,
+            max_age=60 * 60 * 24 * 30,
+        )
+        return response
+
+    if not is_admin_request(request):
         error = ""
-        if token:
+        if token or login_error:
             error = "<div class='notice' style='border-color:rgba(255,93,143,.38)'>Неверный админ-токен.</div>"
         return html_page(
             "AutoPiar Admin",
@@ -536,7 +585,7 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
                 {error}
               </div>
             </section>
-            <form method="get" action="/admin" class="card" style="max-width:480px" data-animate>
+            <form method="post" action="/admin/login" class="card" style="max-width:480px" data-animate>
               <label>Админ-токен</label>
               <input name="token" type="password" placeholder="LICENSE_ADMIN_TOKEN" autofocus>
               <button type="submit">Войти</button>
@@ -561,7 +610,6 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
             revoke_action = "/admin/revoke/" + quote(str(row["key"]), safe="")
             revoke = (
                 f"<form method='post' action='{revoke_action}' style='margin:0'>"
-                f"<input type='hidden' name='token' value='{ha(token)}'>"
                 f"<button class='button danger' type='submit' style='margin:0;padding:10px 12px'>Отозвать</button>"
                 f"</form>"
             )
@@ -603,7 +651,7 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
     )
     backup_files = list_backup_files()[:8]
     backup_items = "".join(
-        f"<li><a href='{ha('/admin/backup/file/' + item.name + '?' + urlencode({'token': token}))}'>{h(item.name)}</a></li>"
+        f"<li><a href='{ha('/admin/backup/file/' + item.name)}'>{h(item.name)}</a></li>"
         for item in backup_files
     ) or "<li>Бэкапов пока нет.</li>"
     rows_html = "\n".join(table_rows) or "<div class='empty-state'>Ключей пока нет. Создайте первый ключ слева.</div>"
@@ -628,13 +676,15 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
               <span class="pill">revoked: {revoked_count}</span>
               <span class="pill">devices: {device_total}</span>
             </div>
+            <form method="post" action="/admin/logout" style="margin-top:10px">
+              <button class="button secondary" type="submit">Выйти</button>
+            </form>
           </div>
         </section>
         {storage_warning}
         {created_block}
         <div class="grid">
           <form method="post" action="/admin/create" class="bento-card" data-animate style="--i:1">
-            <input type="hidden" name="token" value="{ha(token)}">
             <h2>Создать ключ</h2>
             <p>Новый ключ добавится в общий список, старые ключи не перезаписываются.</p>
             <label>Клиент / заметка</label>
@@ -651,11 +701,10 @@ def admin_page(token: str = Query(default=""), created: str = Query(default=""))
             <h2>Бэкапы</h2>
             <p>Скачайте БД перед переносом на другой хостинг. JSON удобен для миграции в другую БД.</p>
             <div class="button-row">
-              <a class="button" href="/admin/backup/download?{ha(urlencode({'token': token}))}">Скачать SQLite</a>
-              <a class="button secondary" href="/admin/export.json?{ha(urlencode({'token': token}))}">Экспорт JSON</a>
+              <a class="button" href="/admin/backup/download">Скачать SQLite</a>
+              <a class="button secondary" href="/admin/export.json">Экспорт JSON</a>
             </div>
             <form method="post" action="/admin/backup/create" style="margin-top:10px">
-              <input type="hidden" name="token" value="{ha(token)}">
               <button type="submit">Создать snapshot</button>
             </form>
             <ul class="backup-list">{backup_items}</ul>
@@ -774,13 +823,13 @@ def create_key(payload: CreateKeyRequest) -> dict:
 
 @app.post("/admin/create")
 def admin_create_key(
-    token: str = Form(...),
+    request: Request,
     owner: str = Form(default="client"),
     days: int = Form(default=30),
     max_devices: int = Form(default=1),
     license_type: str = Form(default="user"),
 ):
-    if not is_admin_token(token):
+    if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     payload = CreateKeyRequest(
         owner=owner,
@@ -789,12 +838,12 @@ def admin_create_key(
         license_type=license_type,
     )
     created = create_key(payload)["license"]["key"]
-    return RedirectResponse(url=admin_url(token, created=created), status_code=303)
+    return redirect_admin(created=created)
 
 
 @app.get("/admin/export.json")
-def admin_export_json(token: str = Query(default="")):
-    if not is_admin_token(token):
+def admin_export_json(request: Request):
+    if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     data = export_license_data()
     headers = {
@@ -804,8 +853,8 @@ def admin_export_json(token: str = Query(default="")):
 
 
 @app.get("/admin/backup/download")
-def admin_download_current_db(token: str = Query(default="")):
-    if not is_admin_token(token):
+def admin_download_current_db(request: Request):
+    if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     backup_path = create_sqlite_backup("download")
     return FileResponse(
@@ -816,16 +865,16 @@ def admin_download_current_db(token: str = Query(default="")):
 
 
 @app.post("/admin/backup/create")
-def admin_create_backup(token: str = Form(...)):
-    if not is_admin_token(token):
+def admin_create_backup(request: Request):
+    if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     create_sqlite_backup("manual")
-    return RedirectResponse(url=admin_url(token), status_code=303)
+    return redirect_admin()
 
 
 @app.get("/admin/backup/file/{filename}")
-def admin_download_backup_file(filename: str, token: str = Query(default="")):
-    if not is_admin_token(token):
+def admin_download_backup_file(filename: str, request: Request):
+    if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     if "/" in filename or "\\" in filename or not filename.endswith(".db"):
         raise HTTPException(status_code=400, detail="Invalid filename.")
@@ -853,8 +902,8 @@ def revoke_key(license_key: str) -> dict:
 
 
 @app.post("/admin/revoke/{license_key}")
-def admin_revoke_key(license_key: str, token: str = Form(...)):
-    if not is_admin_token(token):
+def admin_revoke_key(license_key: str, request: Request):
+    if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Invalid admin token.")
     revoke_license_key(license_key)
-    return RedirectResponse(url=admin_url(token), status_code=303)
+    return redirect_admin()

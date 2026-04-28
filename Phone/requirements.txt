@@ -1,2 +1,2 @@
-Telethon
-qrcode
+Telethon==1.43.2
+qrcode==8.2

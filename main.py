@@ -2194,12 +2194,27 @@ class NeonMainWindow(QtWidgets.QMainWindow):
         event.accept()
 
 
+class LicenseCheckWorker(QtCore.QObject):
+    finished = QtCore.pyqtSignal(object)
+
+    def __init__(self, server_url: str, license_key: str):
+        super().__init__()
+        self.server_url = server_url
+        self.license_key = license_key
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        self.finished.emit(verify_online_license(self.server_url, self.license_key))
+
+
 class OnlineLicenseDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Лицензия AutoPiar")
         self.setModal(True)
         self.resize(500, 340)
+        self._license_thread: Optional[QtCore.QThread] = None
+        self._license_worker: Optional[LicenseCheckWorker] = None
 
         config = load_license_config()
 
@@ -2327,6 +2342,8 @@ class OnlineLicenseDialog(QtWidgets.QDialog):
             )
 
     def check_license(self):
+        if self._license_thread and self._license_thread.isRunning():
+            return
         server_url = self.in_server_url.text().strip()
         license_key = self.in_key.text().strip()
         if not server_url or not license_key:
@@ -2336,14 +2353,29 @@ class OnlineLicenseDialog(QtWidgets.QDialog):
 
         self.btn_check.setEnabled(False)
         self._set_status("Проверяю ключ на сервере...", None)
-        QtWidgets.QApplication.processEvents()
+        self._license_thread = QtCore.QThread(self)
+        self._license_worker = LicenseCheckWorker(server_url, license_key)
+        self._license_worker.moveToThread(self._license_thread)
+        self._license_thread.started.connect(self._license_worker.run)
+        self._license_worker.finished.connect(self._on_license_result)
+        self._license_worker.finished.connect(self._license_thread.quit)
+        self._license_worker.finished.connect(self._license_worker.deleteLater)
+        self._license_thread.finished.connect(self._license_thread.deleteLater)
+        self._license_thread.finished.connect(self._clear_license_thread)
+        self._license_thread.start()
 
-        result = verify_online_license(server_url, license_key)
+    @QtCore.pyqtSlot(object)
+    def _on_license_result(self, result):
         self.btn_check.setEnabled(True)
         self._set_status(result.message, result.ok)
         if result.ok:
-            save_license_config(server_url, license_key)
+            save_license_config(self.in_server_url.text().strip(), self.in_key.text().strip())
             self.accept()
+
+    @QtCore.pyqtSlot()
+    def _clear_license_thread(self):
+        self._license_thread = None
+        self._license_worker = None
 
 
 def main():

@@ -1,9 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+project_root = Path(SPECPATH).resolve()
 
 a = Analysis(
-    ['C:\\Users\\Home\\Desktop\\bind\\main.py'],
-    pathex=[],
+    [str(project_root / 'main.py')],
+    pathex=[str(project_root)],
     binaries=[],
     datas=[],
     hiddenimports=[],
@@ -22,7 +26,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main',
+    name='AutoPiar',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
