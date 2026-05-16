@@ -1,8 +1,6 @@
-# AutoPiar Phone
+# AutoPiar Telegram для термукса
 
-CLI-версия AutoPiar для Termux. Скрипт умеет входить в Telegram по номеру или QR, показывать папки и чаты, выбирать несколько папок, загружать форумные темы и отправлять текст по кругу с cooldown.
-
-## Установка в Termux
+## Тутор установки (для Termux)
 
 ```bash
 pkg update -y
@@ -10,9 +8,7 @@ pkg install python unzip -y
 pip install -r requirements.txt
 ```
 
-## Запуск
-
-Если запускаете из корня репозитория:
+## Запускаем скрипт, API ID и HASH берем отсюда - https://my.telegram.org/apps
 
 ```bash
 export API_ID=123456
@@ -28,20 +24,11 @@ export API_HASH=abcdef123456
 python Phone/main.py
 ```
 
-Скрипт сначала попросит лицензионный ключ, затем предложит вход в Telegram. Остановка рассылки: `Ctrl+C`.
+Скрипт сначала попросит лицензионный ключ, потом происходит заход на акк, а дальше рассылка. Остановка рассылки: `Ctrl+C`
+ 
+## Прем эмодзи
 
-## Настройки
-
-- `API_ID` и `API_HASH` - данные приложения Telegram с <https://my.telegram.org/apps>.
-- `AUTOPIAR_LICENSE_KEY` - лицензионный ключ без интерактивного ввода.
-- `AUTOPIAR_LICENSE_SERVER_URL` - свой сервер лицензий, если нужен.
-- `AUTOPIAR_DATA_DIR` - папка для сессии и локальных файлов.
-- `SESSION_NAME` - путь/имя Telethon session.
-- `NO_COLOR=1` - отключить цвета терминала.
-
-## Custom emoji
-
-В тексте можно использовать Telegram custom emoji:
+В тексте можно использовать прем эмодзи через эту форму(в поиске тг пишите "emoji code" и в бот отправляете эмодзи, копируете HTML код):
 
 ```html
 <tg-emoji emoji-id="123456789">🙂</tg-emoji>
