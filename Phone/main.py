@@ -68,7 +68,7 @@ def c(text: str, *styles: str) -> str:
 def banner():
     line = "═" * 44
     print(c("\n" + line, Style.violet))
-    print(c("  AutoPiar Phone", Style.bold, Style.violet) + c("  Termux CLI", Style.pink))
+    print(c("  AutoPiar Telegram", Style.bold, Style.violet) + c("  Termux версия", Style.pink))
     print(c(line, Style.pink))
 
 
@@ -258,7 +258,7 @@ def ask_indexes(prompt: str, max_count: int) -> list[int]:
 
 def read_message() -> str:
     section("Текст сообщения")
-    info("Вставьте текст сообщения. Напишите /done на новой строке и нажмите Enter чтобы запустить отправку.")
+    info("Вставьте текст сообщения. Напишите /done на новой строке и нажмите Enter чтобы запустить отправку")
     lines = []
     while True:
         line = input()
@@ -288,7 +288,7 @@ def print_qr_login_url(url: str):
 async def ensure_login(client: TelegramClient):
     await client.connect()
     if await client.is_user_authorized():
-        success("Аккаунт уже авторизован.")
+        success("Аккаунт уже авторизован")
         return
 
     while True:
@@ -300,50 +300,50 @@ async def ensure_login(client: TelegramClient):
         if choice == "2":
             qr_login = await client.qr_login()
             print_qr_login_url(qr_login.url)
-            info("Сканируйте QR в Telegram: Настройки -> Устройства -> Подключить устройство")
+            info("Сканируй QR в ТГ: Настройки - Устройства - Подключить устройство")
             try:
                 await qr_login.wait(timeout=60)
                 if await client.is_user_authorized():
-                    success("Вход по QR выполнен.")
+                    success("Вход по QR выполнен")
                     return
             except SessionPasswordNeededError:
                 password = ask("Введите пароль 2FA")
                 await client.sign_in(password=password)
-                success("Авторизация успешна.")
+                success("Авторизация успешна")
                 return
             except asyncio.TimeoutError:
-                warn("QR истек. Можно запросить новый.")
+                warn("QR истек, можно запросить новый")
             except Exception as exc:
                 error(f"Ошибка QR-входа: {type(exc).__name__}: {exc}")
             continue
 
         phone = ask("Телефон в формате +хххххххххх")
         if not phone:
-            warn("Номер пуст.")
+            warn("Номер пустой")
             continue
 
         await client.send_code_request(phone)
         while True:
-            code = ask("Код из Telegram")
+            code = ask("Код из ТГ")
             if not code:
-                warn("Код пуст.")
+                warn("Код пуст")
                 continue
             try:
                 await client.sign_in(phone=phone, code=code)
-                success("Авторизация успешна.")
+                success("Авторизация успешна")
                 return
             except PhoneCodeInvalidError:
-                error("Неверный код, попробуйте снова.")
+                error("Неверный код, попробуй снова")
             except SessionPasswordNeededError:
                 password = ask("Введите пароль 2FA")
                 await client.sign_in(password=password)
-                success("Авторизация успешна.")
+                success("Авторизация успешна")
                 return
 
 
 async def load_chats_and_folders(client: TelegramClient) -> tuple[list[ChatItem], list[FolderItem]]:
     section("Папки")
-    info("Загружаю папки Telegram...")
+    info("Загружаю папки аккаунта...")
     folder_names = {0: "Все чаты"}
     folder_filters = []
     if GetDialogFiltersRequest is not None:
@@ -367,7 +367,7 @@ async def load_chats_and_folders(client: TelegramClient) -> tuple[list[ChatItem]
                     }
                 )
         except Exception as exc:
-            warn(f"Не удалось загрузить папки Telegram: {type(exc).__name__}: {exc}")
+            warn(f"Не удалось загрузить папки(напишите @absolute_christian со скрином ошибки): {type(exc).__name__}: {exc}")
 
     dialogs = await client.get_dialogs(limit=500)
     items = []
@@ -523,7 +523,7 @@ async def auto_send_loop(client: TelegramClient, targets: list[dict], message: s
     round_num = 0
 
     section("Рассылка")
-    success(f"Старт: целей {len(targets)}, КД {cooldown_minutes} мин. Остановка: Ctrl+C")
+    success(f"Старт: чатов {len(targets)}, КД {cooldown_minutes} мин. Остановка: Ctrl+C")
     while True:
         round_num += 1
         print(c(f"\nКруг {round_num}", Style.bold, Style.violet))
@@ -543,14 +543,14 @@ async def auto_send_loop(client: TelegramClient, targets: list[dict], message: s
             if idx < len(targets):
                 await asyncio.sleep(per_chat_delay_sec)
 
-        info(f"Жду {cooldown_minutes} мин до следующего круга.")
+        info(f"Жду {cooldown_minutes} мин до следующего круга")
         await asyncio.sleep(cooldown_minutes * 60)
 
 
 async def choose_targets(client: TelegramClient) -> list[dict]:
     chats, folders = await load_chats_and_folders(client)
     if not folders:
-        warn("Папки Telegram не найдены.")
+        warn("Папки не найдены")
         return []
 
     show_folders(folders)
@@ -605,7 +605,7 @@ async def choose_targets(client: TelegramClient) -> list[dict]:
                     }
                 )
         else:
-            warn("Форумные темы не найдены.")
+            warn("Форумных тем не найдено")
 
     return targets
 
@@ -616,10 +616,10 @@ async def main():
     if not license_result.ok:
         error(license_result.message)
         return
-    success("Лицензия активна.")
+    success("Лицензия активна")
 
     if not API_ID or not API_HASH:
-        error("Заполните API_ID и API_HASH в main.py или переменных окружения.")
+        error("Заполните API_ID и API_HASH в main.py или переменных окружения")
         return
 
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
@@ -627,7 +627,7 @@ async def main():
         await ensure_login(client)
         targets = await choose_targets(client)
         if not targets:
-            warn("Цели не выбраны.")
+            warn("Цели не выбраны")
             return
 
         message = read_message()
@@ -638,7 +638,7 @@ async def main():
         cooldown = int(ask("КД в минутах", "5") or "5")
         await auto_send_loop(client, targets, message, cooldown)
     except KeyboardInterrupt:
-        warn("\nОстановлено.")
+        warn("\nОстановлено")
     finally:
         await client.disconnect()
 
